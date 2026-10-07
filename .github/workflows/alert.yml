@@ -1,0 +1,45 @@
+name: stock-alert
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # 5분마다 (GitHub 사정으로 수 분 지연될 수 있음)
+  workflow_dispatch:         # 수동 실행 버튼
+
+concurrency:
+  group: stock-alert
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install requests
+
+      # 토큰/알림상태 복원 (매 실행마다 새 키로 저장 -> 가장 최근 것을 복원)
+      - name: Restore state
+        uses: actions/cache@v4
+        with:
+          path: |
+            .kis_token.json
+            .kakao_token.json
+            .alert_state.json
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Write secrets to files
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          KAKAO_TOKEN_JSON: ${{ secrets.KAKAO_TOKEN_JSON }}
+        run: |
+          printf '%s' "$CONFIG_JSON" > config.json
+          if [ ! -f .kakao_token.json ]; then printf '%s' "$KAKAO_TOKEN_JSON" > .kakao_token.json; fi
+
+      - run: python run_once.py

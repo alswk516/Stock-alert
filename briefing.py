@@ -58,8 +58,13 @@ def holdings_lines(watchlist):
     out = []
     for w in watchlist:
         mk = w.get("market", "KR")
-        sym = w.get("yahoo") or (w["symbol"] + ".KS" if mk == "KR" else w["symbol"])
-        q = quote(sym)
+        if w.get("yahoo"):
+            cands = [w["yahoo"]]
+        elif mk == "KR":
+            cands = [w["symbol"] + ".KS", w["symbol"] + ".KQ"]  # 코스피/코스닥 자동 판별
+        else:
+            cands = [w["symbol"]]
+        q = next((x for x in (quote(c) for c in cands) if x), None)
         if q:
             px, pct = q
             cur = f"{px:,.0f}원" if mk == "KR" else f"${px:,.2f}"

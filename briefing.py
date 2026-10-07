@@ -54,10 +54,17 @@ def market_lines():
     return out
 
 
-def holdings_lines(watchlist):
+def holdings_lines(watchlist, kis=None):
     out = []
     for w in watchlist:
         mk = w.get("market", "KR")
+        if kis and mk == "KR":  # 국내 종목은 KIS 시세(정확)
+            try:
+                px, pct = kis.quote_kr(w["symbol"])
+                out.append(f'{w["name"]} {px:,.0f}원 ({arrow(pct)}{abs(pct):.1f}%)')
+                continue
+            except Exception:
+                pass
         if w.get("yahoo"):
             cands = [w["yahoo"]]
         elif mk == "KR":
@@ -111,12 +118,12 @@ def top_news(rss_urls, n=3):
     return pool[:n]
 
 
-def build_text(cfg, now):
+def build_text(cfg, now, kis=None):
     parts = [f"📊 증시 브리핑 {now:%m/%d(%a)}"]
     m = market_lines()
     if m:
         parts.append("\n".join(m))
-    h = holdings_lines(cfg["watchlist"])
+    h = holdings_lines(cfg["watchlist"], kis)
     if h:
         parts.append("💼 보유종목 종가\n" + "\n".join(h))
     news = top_news(cfg.get("news_rss"), 3)

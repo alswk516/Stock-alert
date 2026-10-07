@@ -99,6 +99,15 @@ class KIS:
         )
         return float(d["output"]["stck_prpr"])
 
+    def quote_kr(self, code):
+        """(현재가/종가, 전일대비%) - KIS 기준."""
+        d = self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "FHKST01010100",
+            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
+        )["output"]
+        return float(d["stck_prpr"]), float(d.get("prdy_ctrt") or 0)
+
     def price_us(self, symbol, excd):
         """설정한 거래소에서 시세가 비어 있으면 다른 거래소(NYS/AMS/NAS)도 시도."""
         d = {}
@@ -212,7 +221,7 @@ def run_cycle(cfg, kis, kakao, state):
     if cfg.get("telegram") and state.get("_briefing") != today and (now.hour, now.minute) >= (hh, mm):
         try:
             import briefing
-            text = briefing.build_text(cfg, now)
+            text = briefing.build_text(cfg, now, kis)
             if text:
                 Telegram(cfg["telegram"]).send(text)
                 state["_briefing"] = today

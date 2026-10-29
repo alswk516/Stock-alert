@@ -99,7 +99,8 @@ class KIS:
         )
         return float(d["output"]["stck_prpr"])
 
-        def quote_kr(self, code):
+    
+    def quote_kr(self, code):
         """(현재가, 전일 대비 등락률%) - 최근 두 거래일 종가로 직접 계산."""
         d = self._get(
             "/uapi/domestic-stock/v1/quotations/inquire-price",
@@ -128,7 +129,7 @@ class KIS:
         except Exception:
             pass
         return px, pct
-
+        
     def price_us(self, symbol, excd):
         """설정한 거래소에서 시세가 비어 있으면 다른 거래소(NYS/AMS/NAS)도 시도."""
         d = {}

@@ -99,14 +99,35 @@ class KIS:
         )
         return float(d["output"]["stck_prpr"])
 
-    def quote_kr(self, code):
-        """(현재가/종가, 전일대비%) - KIS 기준."""
+        def quote_kr(self, code):
+        """(현재가, 전일 대비 등락률%) - 최근 두 거래일 종가로 직접 계산."""
         d = self._get(
             "/uapi/domestic-stock/v1/quotations/inquire-price",
             "FHKST01010100",
             {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
         )["output"]
-        return float(d["stck_prpr"]), float(d.get("prdy_ctrt") or 0)
+        px = float(d["stck_prpr"])
+        pct = float(d.get("prdy_ctrt") or 0)
+        if str(d.get("prdy_vrss_sign", "")) in ("4", "5") and pct > 0:
+            pct = -pct
+        try:
+            h = self._get(
+                "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
+                "FHKST01010400",
+                {
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                    "FID_PERIOD_DIV_CODE": "D",
+                    "FID_ORG_ADJ_PRC": "1",
+                },
+            )
+            rows = h.get("output") or []
+            last, prev = float(rows[0]["stck_clpr"]), float(rows[1]["stck_clpr"])
+            if prev:
+                px, pct = last if last else px, (last - prev) / prev * 100
+        except Exception:
+            pass
+        return px, pct
 
     def price_us(self, symbol, excd):
         """설정한 거래소에서 시세가 비어 있으면 다른 거래소(NYS/AMS/NAS)도 시도."""

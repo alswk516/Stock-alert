@@ -1,6 +1,6 @@
-"""보유종목 목표가 알림(카카오톡) + 매일 시황 브리핑(텔레그램).
+"""보유종목 목표가 알림(카카오톡 + 텔레그램) + 매일 시황 브리핑(텔레그램).
 
-- 목표가 도달  -> 카카오톡 '나에게 보내기'
+- 목표가 도달  -> 카카오톡 '나에게 보내기' + 텔레그램
 - 매일 브리핑  -> 텔레그램 (국제 시황 뉴스 3건 + 보유종목 종가)
 """
 import json
@@ -99,37 +99,29 @@ class KIS:
         )
         return float(d["output"]["stck_prpr"])
 
-    
     def quote_kr(self, code):
-        """(현재가, 전일 대비 등락률%) - 최근 두 거래일 종가로 직접 계산."""
-        d = self._get(
-            "/uapi/domestic-stock/v1/quotations/inquire-price",
-            "FHKST01010100",
-            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
-        )["output"]
-        px = float(d["stck_prpr"])
-        pct = float(d.get("prdy_ctrt") or 0)
-        if str(d.get("prdy_vrss_sign", "")) in ("4", "5") and pct > 0:
-            pct = -pct
-        try:
-            h = self._get(
-                "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
-                "FHKST01010400",
-                {
-                    "FID_COND_MRKT_DIV_CODE": "J",
-                    "FID_INPUT_ISCD": code,
-                    "FID_PERIOD_DIV_CODE": "D",
-                    "FID_ORG_ADJ_PRC": "1",
-                },
-            )
-            rows = h.get("output") or []
-            last, prev = float(rows[0]["stck_clpr"]), float(rows[1]["stck_clpr"])
-            if prev:
-                px, pct = last if last else px, (last - prev) / prev * 100
-        except Exception:
-            pass
-        return px, pct
-        
+        """(종가, 전일 대비 등락률%) - 장이 끝난 최근 거래일 기준.
+
+        장 시작 전에는 일별 시세 맨 앞에 '오늘' 행이 종가=전일 종가로 먼저 생기고,
+        현재가 API의 prdy_ctrt 도 0 이라서 그대로 쓰면 모든 종목이 0.0% 로 나온다.
+        그래서 15:30 전이면 오늘 행은 건너뛰고 전 거래일 종가로 계산한다.
+        """
+        rows = self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
+            "FHKST01010400",
+            {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": code,
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "1",
+            },
+        ).get("output") or []
+        now = datetime.now(KST)
+        if rows and rows[0].get("stck_bsop_date") == f"{now:%Y%m%d}" and (now.hour, now.minute) < (15, 30):
+            rows = rows[1:]
+        last, prev = float(rows[0]["stck_clpr"]), float(rows[1]["stck_clpr"])
+        return last, (last - prev) / prev * 100
+
     def price_us(self, symbol, excd):
         """설정한 거래소에서 시세가 비어 있으면 다른 거래소(NYS/AMS/NAS)도 시도."""
         d = {}
@@ -232,7 +224,7 @@ def fmt(price, market):
 
 
 def run_cycle(cfg, kis, kakao, state):
-    """브리핑(텔레그램) + 목표가 확인(카카오). 발송 실패 횟수를 반환."""
+    """브리핑(텔레그램) + 목표가 확인(카카오 + 텔레그램). 발송 실패 횟수를 반환."""
     watch = cfg["watchlist"]
     hh, mm = map(int, cfg.get("briefing_time", "07:00").split(":"))
     errors = 0
@@ -255,7 +247,10 @@ def run_cycle(cfg, kis, kakao, state):
             errors += 1
         save_json(STATE_PATH, state)
 
-    # 목표가 확인
+    # 목표가 확인 -> 카카오톡 + 텔레그램 (채널별로 발송 성공 여부를 따로 기록)
+    channels = {"kakao": kakao}
+    if cfg.get("telegram"):
+        channels["telegram"] = Telegram(cfg["telegram"])
     for w in watch:
         market = w.get("market", "KR")
         if (market == "KR" and not kr_open()) or (market == "US" and not us_open()):
@@ -275,20 +270,26 @@ def run_cycle(cfg, kis, kakao, state):
         for side, target, hit, label in checks:
             if target is None:
                 continue
-            if hit and not st.get(side):
+            sent = st.get(side) or []  # 발송 완료한 채널 목록
+            if sent is True:  # 예전 형식(True = 카카오 발송 완료) -> 이미 알린 것으로 간주
+                sent = list(channels)
+            pending = [name for name in channels if name not in sent]
+            if hit and pending:
                 msg = f'[{w["name"]}] {label}\n현재가 {fmt(price, market)} / 목표 {fmt(target, market)}\n{datetime.now(KST):%m/%d %H:%M}'
-                try:
-                    kakao.send(msg)
-                    st[side] = True  # 발송 성공 시에만 '알림 완료' 처리
-                    log.info("알림 발송: %s", msg.replace("\n", " | "))
-                except Exception as e:
-                    log.error("카카오 발송 실패(다음 주기에 재시도): %s", e)
-                    errors += 1
-            elif not hit and st.get(side):
+                for name in pending:
+                    try:
+                        channels[name].send(msg)
+                        sent.append(name)  # 발송 성공한 채널만 '알림 완료' 처리
+                        log.info("알림 발송(%s): %s", name, msg.replace("\n", " | "))
+                    except Exception as e:
+                        log.error("%s 발송 실패(다음 주기에 재시도): %s", name, e)
+                        errors += 1
+                st[side] = sent
+            elif not hit and sent:
                 # 가격이 목표에서 충분히 벗어나면(1%) 재알림 가능하도록 초기화
                 far = price < target * 0.99 if side == "above" else price > target * 1.01
                 if far:
-                    st[side] = False
+                    st[side] = []
         save_json(STATE_PATH, state)
         time.sleep(0.3)  # KIS 호출 제한 여유
     return errors

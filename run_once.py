@@ -10,4 +10,4 @@ if not cfg:
 kis, kakao = sa.KIS(cfg["kis"]), sa.Kakao(cfg["kakao"])
 state = sa.load_json(sa.STATE_PATH, {})
 errors = sa.run_cycle(cfg, kis, kakao, state)
-sys.exit(1 if errors else 0)  # 카카오 발송 실패 시 Actions 실패 -> GitHub 이메일로 알림
+sys.exit(1 if errors else 0)  # 카카오/텔레그램 발송 실패 시 Actions 실패 -> GitHub 이메일로 알림

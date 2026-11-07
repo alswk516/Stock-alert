@@ -4,6 +4,7 @@
 - 매일 브리핑  -> 텔레그램 (국제 시황 뉴스 3건 + 보유종목 종가)
 """
 import json
+import re
 import sys
 import time
 import logging
@@ -182,7 +183,7 @@ class Kakao:
             return
 
 
-# ---------------------------------------------------------------- Telegram (브리핑)
+# ---------------------------------------------------------------- Telegram (브리핑 + 목표가 알림)
 class Telegram:
     def __init__(self, cfg):
         self.token = cfg["bot_token"]
@@ -198,12 +199,20 @@ class Telegram:
             cur += line + "\n"
         chunks.append(cur)
         for c in chunks:
-            r = requests.post(
-                f"https://api.telegram.org/bot{self.token}/sendMessage",
-                json={"chat_id": self.chat_id, "text": c.strip(), "disable_web_page_preview": True},
-                timeout=10,
-            )
-            r.raise_for_status()
+            try:
+                r = requests.post(
+                    f"https://api.telegram.org/bot{self.token}/sendMessage",
+                    json={"chat_id": self.chat_id, "text": c.strip(), "disable_web_page_preview": True},
+                    timeout=10,
+                )
+                r.raise_for_status()
+            except requests.RequestException as e:
+                # 오류 메시지의 URL에 봇 토큰이 들어 있음 -> 공개 Actions 로그에 남지 않게 가림
+                msg = str(e)
+                if e.response is not None:  # 텔레그램이 알려 준 실패 이유 (예: chat not found)
+                    msg += f" ({e.response.text[:200]})"
+                msg = re.sub(r"/bot[^/\s]+", "/bot***", msg).replace(str(self.token), "***")
+                raise RuntimeError(f"텔레그램 발송 실패: {msg}") from None
 
 
 # ---------------------------------------------------------------- 시장 시간

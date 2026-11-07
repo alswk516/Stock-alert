@@ -4,6 +4,7 @@
 - 매일 브리핑  -> 텔레그램 (국제 시황 뉴스 3건 + 보유종목 종가)
 """
 import json
+import re
 import sys
 import time
 import logging
@@ -15,6 +16,7 @@ import requests
 
 BASE = Path(__file__).parent
 CONFIG_PATH = BASE / "config.json"
+WATCHLIST_PATH = BASE / "watchlist.json"
 KIS_TOKEN_PATH = BASE / ".kis_token.json"
 KAKAO_TOKEN_PATH = BASE / ".kakao_token.json"
 STATE_PATH = BASE / ".alert_state.json"
@@ -39,6 +41,27 @@ def load_json(path, default=None):
 
 def save_json(path, data):
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_config():
+    """config.json 을 읽고, watchlist.json 이 있으면 목표가 목록을 그걸로 바꾼다.
+
+    목표가 목록은 GitHub 시크릿 WATCHLIST_JSON 으로 따로 관리 (API 키가 든 CONFIG_JSON 을 건드리지 않고
+    바꿀 수 있게). 워크플로가 그 시크릿을 watchlist.json 으로 만든다. 없으면 config.json 의 watchlist 를 쓴다.
+    """
+    cfg = load_json(CONFIG_PATH)
+    if not cfg or not WATCHLIST_PATH.exists():
+        return cfg
+    try:
+        data = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:  # 오류 위치만 알려 줌 (내용은 로그에 남기지 않음)
+        sys.exit(f"WATCHLIST_JSON 형식 오류: {e.msg} ({e.lineno}번째 줄 {e.colno}번째 글자)")
+    if isinstance(data, dict):  # {"watchlist": [...]} 형태로 붙여 넣어도 됨
+        data = data.get("watchlist")
+    if not isinstance(data, list) or not all(isinstance(w, dict) and "name" in w and "symbol" in w for w in data):
+        sys.exit('WATCHLIST_JSON 은 [{"name": ..., "symbol": ...}, ...] 형태의 목록이어야 합니다')
+    cfg["watchlist"] = data
+    return cfg
 
 
 # ---------------------------------------------------------------- KIS
@@ -182,7 +205,7 @@ class Kakao:
             return
 
 
-# ---------------------------------------------------------------- Telegram (브리핑)
+# ---------------------------------------------------------------- Telegram (브리핑 + 목표가 알림)
 class Telegram:
     def __init__(self, cfg):
         self.token = cfg["bot_token"]
@@ -198,12 +221,20 @@ class Telegram:
             cur += line + "\n"
         chunks.append(cur)
         for c in chunks:
-            r = requests.post(
-                f"https://api.telegram.org/bot{self.token}/sendMessage",
-                json={"chat_id": self.chat_id, "text": c.strip(), "disable_web_page_preview": True},
-                timeout=10,
-            )
-            r.raise_for_status()
+            try:
+                r = requests.post(
+                    f"https://api.telegram.org/bot{self.token}/sendMessage",
+                    json={"chat_id": self.chat_id, "text": c.strip(), "disable_web_page_preview": True},
+                    timeout=10,
+                )
+                r.raise_for_status()
+            except requests.RequestException as e:
+                # 오류 메시지의 URL에 봇 토큰이 들어 있음 -> 공개 Actions 로그에 남지 않게 가림
+                msg = str(e)
+                if e.response is not None:  # 텔레그램이 알려 준 실패 이유 (예: chat not found)
+                    msg += f" ({e.response.text[:200]})"
+                msg = re.sub(r"/bot[^/\s]+", "/bot***", msg).replace(str(self.token), "***")
+                raise RuntimeError(f"텔레그램 발송 실패: {msg}") from None
 
 
 # ---------------------------------------------------------------- 시장 시간
@@ -224,7 +255,7 @@ def fmt(price, market):
 
 
 def run_cycle(cfg, kis, kakao, state):
-    """브리핑(텔레그램) + 목표가 확인(카카오 + 텔레그램). 발송 실패 횟수를 반환."""
+    """브리핑(텔레그램) + 카카오 토큰 갱신 + 목표가 확인(카카오 + 텔레그램). 실패 횟수를 반환."""
     watch = cfg["watchlist"]
     hh, mm = map(int, cfg.get("briefing_time", "07:00").split(":"))
     errors = 0
@@ -244,6 +275,20 @@ def run_cycle(cfg, kis, kakao, state):
                 log.warning("브리핑 내용을 가져오지 못함 (다음 주기 재시도)")
         except Exception as e:
             log.error("브리핑 실패(다음 주기 재시도): %s", e)
+            errors += 1
+        save_json(STATE_PATH, state)
+
+    # 카카오 토큰 하루 1회 갱신. 메시지를 보낼 때만 갱신하면 알림이 한동안 없을 때
+    # refresh token(2개월)이 만료됨. 만료 1개월 전부터는 갱신할 때 새 refresh token이 나와서 계속 연장된다.
+    # 실패해도 그날은 다시 시도하지 않음 (5분마다 실패 메일이 가지 않게, 다음 날 재시도)
+    if state.get("_kakao_refresh") != today:
+        state["_kakao_refresh"] = today
+        try:
+            kakao._refresh()
+            log.info("카카오 토큰 갱신 완료")
+        except Exception as e:
+            detail = getattr(getattr(e, "response", None), "text", "")[:200]
+            log.error("카카오 토큰 갱신 실패(내일 재시도, 계속 실패하면 토큰 재발급 필요): %s %s", e, detail)
             errors += 1
         save_json(STATE_PATH, state)
 
@@ -296,7 +341,7 @@ def run_cycle(cfg, kis, kakao, state):
 
 
 def main():
-    cfg = load_json(CONFIG_PATH)
+    cfg = load_config()
     if not cfg:
         sys.exit("config.json 이 없습니다. config.example.json 을 복사해서 작성하세요.")
     kis, kakao = KIS(cfg["kis"]), Kakao(cfg["kakao"])

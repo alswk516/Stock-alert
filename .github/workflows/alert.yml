@@ -37,9 +37,11 @@ jobs:
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
           KAKAO_TOKEN_JSON: ${{ secrets.KAKAO_TOKEN_JSON }}
+          WATCHLIST_JSON: ${{ secrets.WATCHLIST_JSON }}   # 목표가 목록 (없으면 config.json 의 watchlist 사용)
         run: |
           printf '%s' "$CONFIG_JSON" > config.json
           if [ ! -f .kakao_token.json ]; then printf '%s' "$KAKAO_TOKEN_JSON" > .kakao_token.json; fi
+          if [ -n "$WATCHLIST_JSON" ]; then printf '%s' "$WATCHLIST_JSON" > watchlist.json; fi
 
       - run: python run_once.py
 

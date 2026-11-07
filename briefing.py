@@ -27,14 +27,22 @@ INDEXES = [
 
 
 def quote(sym):
-    """(현재/종가, 전일대비%) 반환. 실패 시 None."""
+    """(현재/종가, 전일대비%) 반환. 실패 시 None.
+
+    meta 의 chartPreviousClose 는 '조회 구간(5일) 시작 전날' 종가라 1일 등락률이 아니다.
+    그래서 마지막 시세 날짜보다 앞선 날의 일봉 종가 중 가장 최근 것을 전일 종가로 쓴다.
+    """
     try:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d",
             headers=UA, timeout=10,
         )
-        m = r.json()["chart"]["result"][0]["meta"]
-        px, prev = m["regularMarketPrice"], m.get("chartPreviousClose") or m.get("previousClose")
+        res = r.json()["chart"]["result"][0]
+        m = res["meta"]
+        day = lambda ts: (ts + m.get("gmtoffset", 0)) // 86400  # 거래소 현지 날짜
+        px, today = m["regularMarketPrice"], day(m["regularMarketTime"])
+        bars = zip(res["timestamp"], res["indicators"]["quote"][0]["close"])
+        prev = next(c for ts, c in reversed(list(bars)) if c is not None and day(ts) < today)
         return px, (px - prev) / prev * 100 if prev else 0.0
     except Exception:
         return None

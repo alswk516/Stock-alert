@@ -24,13 +24,13 @@ jobs:
 
       # 토큰/알림상태 복원 (매 실행마다 새 키로 저장 -> 가장 최근 것을 복원)
       - name: Restore state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             .kis_token.json
             .kakao_token.json
             .alert_state.json
-          key: state-${{ github.run_id }}
+          key: state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: state-
 
       - name: Write secrets to files
@@ -42,3 +42,15 @@ jobs:
           if [ ! -f .kakao_token.json ]; then printf '%s' "$KAKAO_TOKEN_JSON" > .kakao_token.json; fi
 
       - run: python run_once.py
+
+      # 발송이 일부 실패해 실행이 실패로 끝나도 상태는 저장
+      # (안 그러면 이미 보낸 알림이 다음 실행에 또 가고, 갱신된 카카오 토큰도 사라짐)
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .kis_token.json
+            .kakao_token.json
+            .alert_state.json
+          key: state-${{ github.run_id }}-${{ github.run_attempt }}

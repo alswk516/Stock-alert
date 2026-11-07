@@ -233,7 +233,7 @@ def fmt(price, market):
 
 
 def run_cycle(cfg, kis, kakao, state):
-    """브리핑(텔레그램) + 목표가 확인(카카오 + 텔레그램). 발송 실패 횟수를 반환."""
+    """브리핑(텔레그램) + 카카오 토큰 갱신 + 목표가 확인(카카오 + 텔레그램). 실패 횟수를 반환."""
     watch = cfg["watchlist"]
     hh, mm = map(int, cfg.get("briefing_time", "07:00").split(":"))
     errors = 0
@@ -253,6 +253,20 @@ def run_cycle(cfg, kis, kakao, state):
                 log.warning("브리핑 내용을 가져오지 못함 (다음 주기 재시도)")
         except Exception as e:
             log.error("브리핑 실패(다음 주기 재시도): %s", e)
+            errors += 1
+        save_json(STATE_PATH, state)
+
+    # 카카오 토큰 하루 1회 갱신. 메시지를 보낼 때만 갱신하면 알림이 한동안 없을 때
+    # refresh token(2개월)이 만료됨. 만료 1개월 전부터는 갱신할 때 새 refresh token이 나와서 계속 연장된다.
+    # 실패해도 그날은 다시 시도하지 않음 (5분마다 실패 메일이 가지 않게, 다음 날 재시도)
+    if state.get("_kakao_refresh") != today:
+        state["_kakao_refresh"] = today
+        try:
+            kakao._refresh()
+            log.info("카카오 토큰 갱신 완료")
+        except Exception as e:
+            detail = getattr(getattr(e, "response", None), "text", "")[:200]
+            log.error("카카오 토큰 갱신 실패(내일 재시도, 계속 실패하면 토큰 재발급 필요): %s %s", e, detail)
             errors += 1
         save_json(STATE_PATH, state)
 

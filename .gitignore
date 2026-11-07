@@ -1,5 +1,6 @@
 # 비밀키·토큰 (절대 업로드 금지)
 config.json
+watchlist.json
 .kis_token.json
 .kakao_token.json
 .alert_state.json

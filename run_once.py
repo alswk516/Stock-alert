@@ -3,7 +3,7 @@ import sys
 
 import stock_alert as sa
 
-cfg = sa.load_json(sa.CONFIG_PATH)
+cfg = sa.load_config()
 if not cfg:
     sys.exit("config.json 없음 (워크플로가 CONFIG_JSON 시크릿으로 생성해야 함)")
 

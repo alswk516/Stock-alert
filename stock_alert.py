@@ -16,6 +16,7 @@ import requests
 
 BASE = Path(__file__).parent
 CONFIG_PATH = BASE / "config.json"
+WATCHLIST_PATH = BASE / "watchlist.json"
 KIS_TOKEN_PATH = BASE / ".kis_token.json"
 KAKAO_TOKEN_PATH = BASE / ".kakao_token.json"
 STATE_PATH = BASE / ".alert_state.json"
@@ -40,6 +41,27 @@ def load_json(path, default=None):
 
 def save_json(path, data):
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_config():
+    """config.json 을 읽고, watchlist.json 이 있으면 목표가 목록을 그걸로 바꾼다.
+
+    목표가 목록은 GitHub 시크릿 WATCHLIST_JSON 으로 따로 관리 (API 키가 든 CONFIG_JSON 을 건드리지 않고
+    바꿀 수 있게). 워크플로가 그 시크릿을 watchlist.json 으로 만든다. 없으면 config.json 의 watchlist 를 쓴다.
+    """
+    cfg = load_json(CONFIG_PATH)
+    if not cfg or not WATCHLIST_PATH.exists():
+        return cfg
+    try:
+        data = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:  # 오류 위치만 알려 줌 (내용은 로그에 남기지 않음)
+        sys.exit(f"WATCHLIST_JSON 형식 오류: {e.msg} ({e.lineno}번째 줄 {e.colno}번째 글자)")
+    if isinstance(data, dict):  # {"watchlist": [...]} 형태로 붙여 넣어도 됨
+        data = data.get("watchlist")
+    if not isinstance(data, list) or not all(isinstance(w, dict) and "name" in w and "symbol" in w for w in data):
+        sys.exit('WATCHLIST_JSON 은 [{"name": ..., "symbol": ...}, ...] 형태의 목록이어야 합니다')
+    cfg["watchlist"] = data
+    return cfg
 
 
 # ---------------------------------------------------------------- KIS
@@ -319,7 +341,7 @@ def run_cycle(cfg, kis, kakao, state):
 
 
 def main():
-    cfg = load_json(CONFIG_PATH)
+    cfg = load_config()
     if not cfg:
         sys.exit("config.json 이 없습니다. config.example.json 을 복사해서 작성하세요.")
     kis, kakao = KIS(cfg["kis"]), Kakao(cfg["kakao"])

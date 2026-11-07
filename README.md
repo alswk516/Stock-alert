@@ -17,7 +17,7 @@ cron-job.org (5분마다)  ──┐
                           ├─▶ GitHub Actions (alert.yml)
 GitHub 예약 실행 (백업)  ──┘        │
                                    ├─ 1. 지난 실행의 상태 복원 (토큰, 알림 기록)
-                                   ├─ 2. Secrets → config.json 생성 (.kakao_token.json은 캐시에 없을 때만)
+                                   ├─ 2. Secrets → config.json, watchlist.json 생성 (.kakao_token.json은 캐시에 없을 때만)
                                    ├─ 3. python run_once.py  ── 한 번 점검하고 종료
                                    │       ├─ 브리핑 (하루 1회)       → 텔레그램
                                    │       └─ 종목별 목표가 확인      → 카카오톡 + 텔레그램
@@ -83,6 +83,7 @@ GitHub 예약 실행 (백업)  ──┘        │
 | 파일 | 내용 |
 |---|---|
 | `config.json` | 설정 전체. API 키가 들어 있습니다. Actions에서는 `CONFIG_JSON` 시크릿으로 만듭니다. |
+| `watchlist.json` | 목표가 목록. Actions에서는 `WATCHLIST_JSON` 시크릿으로 만들고, 있으면 `config.json`의 `watchlist` 대신 씁니다. |
 | `.kis_token.json` | KIS 접근 토큰. 약 24시간 동안 재사용합니다. |
 | `.kakao_token.json` | 카카오 access/refresh 토큰. 하루 한 번 갱신해서 저장합니다. |
 | `.alert_state.json` | 알림 기록: 오늘 브리핑을 보냈는지, 카카오 토큰을 갱신했는지, 종목별로 어느 채널에 알림을 보냈는지 |
@@ -99,6 +100,7 @@ GitHub 예약 실행 (백업)  ──┘        │
 |---|---|
 | `CONFIG_JSON` | 아래 `config.json` 내용 전체 |
 | `KAKAO_TOKEN_JSON` | 처음 한 번 쓸 카카오 토큰: `{"access_token": "...", "refresh_token": "..."}`. 캐시에 토큰이 없을 때만 씁니다. |
+| `WATCHLIST_JSON` | (선택) 목표가 목록. 아래 '목표가 바꾸기'를 참고하세요. 없으면 `config.json`의 `watchlist`를 씁니다. |
 
 ### `config.json` 형식
 ```json
@@ -127,13 +129,28 @@ GitHub 예약 실행 (백업)  ──┘        │
 | `news_rss` | (선택) 뉴스 RSS 주소 목록. 없으면 기본 목록을 씁니다. |
 | `poll_seconds` | (선택) 로컬 감시 모드의 확인 간격(초, 기본 10). Actions에서는 쓰지 않습니다. |
 
-### 목표가 바꾸기
-목표가는 `CONFIG_JSON` 시크릿 안의 `watchlist`에 있습니다. GitHub 시크릿은 저장한 뒤에는 내용을 다시 볼 수 없고 **덮어쓰기만** 할 수 있습니다.
-1. 갖고 계신 `config.json`에서 바꿀 종목의 `target_above` / `target_below` 값을 고칩니다. 알림을 끄려면 그 항목을 지웁니다.
-2. 저장소 **Settings → Secrets and variables → Actions → `CONFIG_JSON` → Update secret**을 누르고, 고친 `config.json` 내용 **전체**를 붙여 넣어 저장합니다.
+### 목표가 바꾸기 (`WATCHLIST_JSON` 시크릿)
+목표가 목록은 API 키가 든 `CONFIG_JSON`과 따로 **`WATCHLIST_JSON` 시크릿**에 둡니다. 그래서 목표가를 바꿀 때 키를 건드리지 않아도 됩니다. 시크릿이라 로그에서는 `***`로 가려집니다.
+`WATCHLIST_JSON`이 없으면 예전처럼 `config.json`의 `watchlist`를 쓰고, 있으면 `config.json`의 `watchlist`는 무시합니다.
+
+**처음 만들 때**
+1. 저장소 **Settings → Secrets and variables → Actions → New repository secret**을 누릅니다.
+2. Name에 `WATCHLIST_JSON`을 입력합니다.
+3. Secret에 목표가 목록을 붙여 넣고 저장합니다. 지금 `config.json`의 `watchlist` 부분을 그대로 쓰면 됩니다.
+   ```json
+   [
+     { "name": "삼성전자", "symbol": "005930", "market": "KR", "target_above": 80000, "target_below": 60000 },
+     { "name": "애플", "symbol": "AAPL", "market": "US", "exchange": "NAS", "target_above": 250 }
+   ]
+   ```
+   `{"watchlist": [...]}` 형태로 붙여 넣어도 됩니다. 각 항목에 쓰는 값은 위 `config.json` 형식의 `watchlist[]` 설명과 같습니다.
+
+**바꿀 때**
+1. **Settings → Secrets and variables → Actions → `WATCHLIST_JSON` → Update secret**을 누릅니다.
+2. 고친 목록 **전체**를 붙여 넣어 저장합니다. 시크릿은 저장한 뒤 내용을 다시 볼 수 없으니, 목표가 목록은 따로 메모해 두고 그걸 고쳐서 붙여 넣으세요.
 3. 다음 실행부터 바뀐 목표가로 확인합니다.
 
-- 저장하기 전에 JSON 문법이 맞는지 확인하세요. 쉼표나 따옴표가 하나라도 틀리면 실행이 실패합니다.
+- JSON 문법이 틀리면 실행이 실패하고, 로그에 `WATCHLIST_JSON 형식 오류: ... (2번째 줄 39번째 글자)`처럼 오류 위치가 찍힙니다. 목표가 내용은 로그에 나오지 않습니다.
 - 이미 지난 가격으로 목표가를 바꾸면 다음 실행에서 바로 알림이 옵니다. 예를 들어 현재가가 6,000원인데 `target_above`를 5,800원으로 바꾸는 경우입니다.
 
 ### cron-job.org (5분마다 실행)
@@ -166,7 +183,7 @@ pip install requests
 ```bash
 python stock_alert.py
 ```
-같은 폴더에 `config.json`과 `.kakao_token.json`이 있어야 합니다. 이 모드는 종료하지 않고 `poll_seconds`마다 계속 확인합니다.
+같은 폴더에 `config.json`과 `.kakao_token.json`이 있어야 합니다. `watchlist.json`을 두면 목표가 목록은 그 파일을 씁니다. 이 모드는 종료하지 않고 `poll_seconds`마다 계속 확인합니다.
 
 ## 알아둘 점
 - **공개 저장소입니다.** Actions 로그는 누구나 볼 수 있고, 알림을 보내면 로그에 종목명·현재가·목표가가 남습니다.
